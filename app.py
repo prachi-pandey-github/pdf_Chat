@@ -8,24 +8,35 @@ from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
 import os
 import time
-from tenacity import retry, stop_after_attempt, wait_exponential
+import hashlib
+import json
+from pathlib import Path
 
 # Set Gemini API key from Streamlit secrets
 genai.configure(api_key=st.secrets["API_KEY"]) 
 
-# Set page config
-st.set_page_config(
-    page_title="PDF Chatbot",
-    page_icon="📚",
-    layout="wide"
-)
-# Initialize session state
-if "conversation" not in st.session_state:
-    st.session_state.conversation = None
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-if "vectorstore" not in st.session_state:
-    st.session_state.vectorstore = None
+# Create cache directory
+CACHE_DIR = Path("embedding_cache")
+CACHE_DIR.mkdir(exist_ok=True)
+
+def get_cache_path(text):
+    """Get cache file path for text."""
+    hash_object = hashlib.md5(text.encode())
+    return CACHE_DIR / f"{hash_object.hexdigest()}.json"
+
+def get_cached_embedding(text):
+    """Get cached embedding if exists."""
+    cache_path = get_cache_path(text)
+    if cache_path.exists():
+        with open(cache_path, 'r') as f:
+            return json.load(f)
+    return None
+
+def save_embedding(text, embedding):
+    """Save embedding to cache."""
+    cache_path = get_cache_path(text)
+    with open(cache_path, 'w') as f:
+        json.dump(embedding, f)
 
 def extract_text_from_pdf(pdf_file):
     """Extract text from PDF file."""
@@ -35,47 +46,45 @@ def extract_text_from_pdf(pdf_file):
         text += page.get_text()
     return text
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-def embed_with_retry(embeddings, text):
-    """Embed text with retry logic."""
-    return embeddings.embed_query(text)
-
 def create_vectorstore(text):
     """Create vector store from text."""
+    # Split into very small chunks
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=200,  # Further reduced chunk size
-        chunk_overlap=20,  # Further reduced overlap
+        chunk_size=100,  # Very small chunks
+        chunk_overlap=10,
         length_function=len
     )
     chunks = text_splitter.split_text(text)
 
     embeddings = GoogleGenerativeAIEmbeddings(
         model="models/embedding-001",
-        max_retries=3,
-        timeout=30,
-        request_timeout=30
+        max_retries=2,
+        timeout=20
     )
     
-    # Process chunks in very small batches
-    batch_size = 3  # Reduced batch size
     all_embeddings = []
-    
     progress_bar = st.progress(0)
     status_text = st.empty()
     
-    for i in range(0, len(chunks), batch_size):
-        batch = chunks[i:i + batch_size]
+    for i, chunk in enumerate(chunks):
         try:
-            status_text.text(f"Processing batch {i//batch_size + 1} of {(len(chunks) + batch_size - 1)//batch_size}")
-            batch_embeddings = []
-            for chunk in batch:
-                embedding = embed_with_retry(embeddings, chunk)
-                batch_embeddings.append(embedding)
-                time.sleep(1)  # Add delay between requests
-            all_embeddings.extend(batch_embeddings)
-            progress_bar.progress(min((i + batch_size) / len(chunks), 1.0))
+            status_text.text(f"Processing chunk {i+1} of {len(chunks)}")
+            
+            # Try to get from cache first
+            cached_embedding = get_cached_embedding(chunk)
+            if cached_embedding:
+                embedding = cached_embedding
+            else:
+                # If not in cache, get from API
+                embedding = embeddings.embed_query(chunk)
+                save_embedding(chunk, embedding)
+                time.sleep(2)  # Longer delay between API calls
+            
+            all_embeddings.append(embedding)
+            progress_bar.progress((i + 1) / len(chunks))
+            
         except Exception as e:
-            st.error(f"Error processing batch {i//batch_size + 1}: {str(e)}")
+            st.error(f"Error processing chunk {i+1}: {str(e)}")
             continue
     
     progress_bar.empty()
