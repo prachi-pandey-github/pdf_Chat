@@ -8,7 +8,7 @@ from langchain.memory import ConversationBufferMemory
 import os
 
 # Set Gemini API key from Streamlit secrets
-os.environ["GOOGLE_API_KEY"] = st.secrets["genei"]["api_key"]
+genai.configure(api_key=st.secrets["API_KEY"]) 
 
 # Set page config
 st.set_page_config(
