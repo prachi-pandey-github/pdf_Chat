@@ -7,6 +7,7 @@ from langchain_community.vectorstores import FAISS
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
 import os
+import time
 
 # Set Gemini API key from Streamlit secrets
 genai.configure(api_key=st.secrets["API_KEY"]) 
@@ -43,16 +44,22 @@ def create_vectorstore(text):
     )
     chunks = text_splitter.split_text(text)
 
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+    embeddings = GoogleGenerativeAIEmbeddings(
+        model="models/embedding-001",
+        max_retries=3,
+        timeout=30
+    )
     vectorstore = FAISS.from_texts(chunks, embeddings)
     return vectorstore
 
 def create_conversation_chain(vectorstore):
     """Create conversation chain."""
     llm = ChatGoogleGenerativeAI(
-        model="gemini-2.0-flash-thinking-exp-01-21",
+        model="gemini-pro",
         temperature=0.7,
-        convert_system_message_to_human=True
+        convert_system_message_to_human=True,
+        max_retries=3,
+        timeout=60
     )
     memory = ConversationBufferMemory(
         memory_key="chat_history",
@@ -61,7 +68,8 @@ def create_conversation_chain(vectorstore):
     conversation_chain = ConversationalRetrievalChain.from_llm(
         llm=llm,
         retriever=vectorstore.as_retriever(),
-        memory=memory
+        memory=memory,
+        max_tokens_limit=4000
     )
     return conversation_chain
 
@@ -93,7 +101,9 @@ if st.session_state.conversation is not None:
 
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
-                response = st.session_state.conversation({"question": prompt})
-                st.write(response["answer"])
-
-        st.session_state.chat_history.append({"role": "assistant", "content": response["answer"]})
+                try:
+                    response = st.session_state.conversation({"question": prompt})
+                    st.write(response["answer"])
+                    st.session_state.chat_history.append({"role": "assistant", "content": response["answer"]})
+                except Exception as e:
+                    st.error(f"An error occurred: {str(e)}. Please try again.")
