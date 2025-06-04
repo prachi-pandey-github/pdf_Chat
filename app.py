@@ -1,16 +1,14 @@
 import streamlit as st
 import fitz  # PyMuPDF
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain.vectorstores import FAISS
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
 import os
-from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+# Set Gemini API key from Streamlit secrets
+os.environ["GOOGLE_API_KEY"] = st.secrets["genei"]["api_key"]
 
 # Set page config
 st.set_page_config(
@@ -37,15 +35,13 @@ def extract_text_from_pdf(pdf_file):
 
 def create_vectorstore(text):
     """Create vector store from text."""
-    # Split text into chunks
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
         chunk_overlap=200,
         length_function=len
     )
     chunks = text_splitter.split_text(text)
-    
-    # Create embeddings and vector store
+
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     vectorstore = FAISS.from_texts(chunks, embeddings)
     return vectorstore
@@ -76,40 +72,27 @@ st.write("Upload a PDF and ask questions about its content!")
 uploaded_file = st.file_uploader("Choose a PDF file", type="pdf")
 
 if uploaded_file is not None:
-    # Process PDF
     with st.spinner("Processing PDF..."):
-        # Extract text
         text = extract_text_from_pdf(uploaded_file)
-        
-        # Create vector store
         st.session_state.vectorstore = create_vectorstore(text)
-        
-        # Create conversation chain
         st.session_state.conversation = create_conversation_chain(st.session_state.vectorstore)
-        
     st.success("PDF processed successfully! You can now ask questions.")
 
 # Chat interface
 if st.session_state.conversation is not None:
-    # Display chat history
     for message in st.session_state.chat_history:
         with st.chat_message(message["role"]):
             st.write(message["content"])
-    
-    # Chat input
+
     if prompt := st.chat_input("Ask a question about your PDF"):
-        # Add user message to chat history
         st.session_state.chat_history.append({"role": "user", "content": prompt})
-        
-        # Display user message
+
         with st.chat_message("user"):
             st.write(prompt)
-        
-        # Get AI response
+
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
                 response = st.session_state.conversation({"question": prompt})
                 st.write(response["answer"])
-                
-        # Add AI response to chat history
-        st.session_state.chat_history.append({"role": "assistant", "content": response["answer"]}) 
+
+        st.session_state.chat_history.append({"role": "assistant", "content": response["answer"]})
