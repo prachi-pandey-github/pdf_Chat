@@ -1,10 +1,8 @@
-langchain
-langchain-community
-google-generativeai
-langchain-google-genai
 streamlit
-pymupdf
+google-generativeai
 python-dotenv
-tiktoken
+langchain
+PyPDF2
+chromadb
 faiss-cpu
-tenacity
+langchain_google_genai
