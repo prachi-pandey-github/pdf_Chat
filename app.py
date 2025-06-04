@@ -8,6 +8,7 @@ from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
 import os
 import time
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Set Gemini API key from Streamlit secrets
 genai.configure(api_key=st.secrets["API_KEY"]) 
@@ -18,7 +19,6 @@ st.set_page_config(
     page_icon="📚",
     layout="wide"
 )
-
 # Initialize session state
 if "conversation" not in st.session_state:
     st.session_state.conversation = None
@@ -35,36 +35,56 @@ def extract_text_from_pdf(pdf_file):
         text += page.get_text()
     return text
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+def embed_with_retry(embeddings, text):
+    """Embed text with retry logic."""
+    return embeddings.embed_query(text)
+
 def create_vectorstore(text):
     """Create vector store from text."""
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=500,  # Reduced chunk size
-        chunk_overlap=50,  # Reduced overlap
+        chunk_size=200,  # Further reduced chunk size
+        chunk_overlap=20,  # Further reduced overlap
         length_function=len
     )
     chunks = text_splitter.split_text(text)
 
     embeddings = GoogleGenerativeAIEmbeddings(
         model="models/embedding-001",
-        max_retries=5,
-        timeout=120,  # Increased timeout
-        request_timeout=120,  # Added request timeout
-        chunk_size=100  # Added chunk size for embeddings
+        max_retries=3,
+        timeout=30,
+        request_timeout=30
     )
     
-    # Process chunks in smaller batches
-    batch_size = 10
+    # Process chunks in very small batches
+    batch_size = 3  # Reduced batch size
     all_embeddings = []
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
     
     for i in range(0, len(chunks), batch_size):
         batch = chunks[i:i + batch_size]
         try:
-            batch_embeddings = embeddings.embed_documents(batch)
+            status_text.text(f"Processing batch {i//batch_size + 1} of {(len(chunks) + batch_size - 1)//batch_size}")
+            batch_embeddings = []
+            for chunk in batch:
+                embedding = embed_with_retry(embeddings, chunk)
+                batch_embeddings.append(embedding)
+                time.sleep(1)  # Add delay between requests
             all_embeddings.extend(batch_embeddings)
+            progress_bar.progress(min((i + batch_size) / len(chunks), 1.0))
         except Exception as e:
             st.error(f"Error processing batch {i//batch_size + 1}: {str(e)}")
             continue
     
+    progress_bar.empty()
+    status_text.empty()
+    
+    if not all_embeddings:
+        st.error("Failed to generate embeddings. Please try again with a smaller PDF.")
+        return None
+        
     vectorstore = FAISS.from_embeddings(
         text_embeddings=list(zip(chunks, all_embeddings)),
         embedding=embeddings,
@@ -103,9 +123,13 @@ uploaded_file = st.file_uploader("Choose a PDF file", type="pdf")
 if uploaded_file is not None:
     with st.spinner("Processing PDF..."):
         text = extract_text_from_pdf(uploaded_file)
-        st.session_state.vectorstore = create_vectorstore(text)
-        st.session_state.conversation = create_conversation_chain(st.session_state.vectorstore)
-    st.success("PDF processed successfully! You can now ask questions.")
+        vectorstore = create_vectorstore(text)
+        if vectorstore:
+            st.session_state.vectorstore = vectorstore
+            st.session_state.conversation = create_conversation_chain(st.session_state.vectorstore)
+            st.success("PDF processed successfully! You can now ask questions.")
+        else:
+            st.error("Failed to process PDF. Please try again with a smaller file.")
 
 # Chat interface
 if st.session_state.conversation is not None:
