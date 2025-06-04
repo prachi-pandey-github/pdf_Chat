@@ -38,18 +38,38 @@ def extract_text_from_pdf(pdf_file):
 def create_vectorstore(text):
     """Create vector store from text."""
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200,
+        chunk_size=500,  # Reduced chunk size
+        chunk_overlap=50,  # Reduced overlap
         length_function=len
     )
     chunks = text_splitter.split_text(text)
 
     embeddings = GoogleGenerativeAIEmbeddings(
         model="models/embedding-001",
-        max_retries=3,
-        timeout=30
+        max_retries=5,
+        timeout=120,  # Increased timeout
+        request_timeout=120,  # Added request timeout
+        chunk_size=100  # Added chunk size for embeddings
     )
-    vectorstore = FAISS.from_texts(chunks, embeddings)
+    
+    # Process chunks in smaller batches
+    batch_size = 10
+    all_embeddings = []
+    
+    for i in range(0, len(chunks), batch_size):
+        batch = chunks[i:i + batch_size]
+        try:
+            batch_embeddings = embeddings.embed_documents(batch)
+            all_embeddings.extend(batch_embeddings)
+        except Exception as e:
+            st.error(f"Error processing batch {i//batch_size + 1}: {str(e)}")
+            continue
+    
+    vectorstore = FAISS.from_embeddings(
+        text_embeddings=list(zip(chunks, all_embeddings)),
+        embedding=embeddings,
+        metadatas=[{"source": f"chunk_{i}"} for i in range(len(chunks))]
+    )
     return vectorstore
 
 def create_conversation_chain(vectorstore):
