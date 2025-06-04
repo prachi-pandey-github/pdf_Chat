@@ -61,9 +61,15 @@ def get_conversational_chain():
 
 
 
+import os
+
 def user_input(user_question):
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-
+    
+    if not os.path.exists("faiss_index/index.faiss"):
+        st.error("FAISS index not found. Please upload a PDF and click 'Submit & Process' first.")
+        return
+    
     new_db = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
     docs = new_db.similarity_search(user_question)
 
