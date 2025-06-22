@@ -1,6 +1,6 @@
 # PDF Chatbot
 
-A powerful chatbot that allows you to upload PDF documents and ask questions about their content. Built with LangChain, Google Gemini, Streamlit, and PyMuPDF.
+A powerful chatbot that allows you to upload PDF documents and ask questions about their content. Built with LangChain, Google Gemini and Streamlit.
 
 ## Features
 
